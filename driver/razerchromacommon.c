@@ -944,8 +944,6 @@ struct razer_report razer_chroma_misc_set_keyswitch_optimization(unsigned char v
             report.arguments[4] = 0x28;
             report.arguments[5] = 0x00;
             break;
-        default:
-            // Error
         }
         break;
     case 0x01:
@@ -960,12 +958,8 @@ struct razer_report razer_chroma_misc_set_keyswitch_optimization(unsigned char v
             report = get_razer_report(0x02, 0x15, 0x05); // calss, id, data size
             report.arguments[0] = 0x01;
             break;
-        default:
-            // Error
         }
         break;
-    default:
-        // Error
     }
 
     return report;
