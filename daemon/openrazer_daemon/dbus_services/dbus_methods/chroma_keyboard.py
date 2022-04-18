@@ -76,11 +76,14 @@ def set_game_mode(self, enable):
 
     driver_path = self.get_driver_path('game_led_state')
 
-    for kb_int in self.additional_interfaces:
-        super_file = os.path.join(kb_int, 'key_super')
-        alt_tab = os.path.join(kb_int, 'key_alt_tab')
-        alt_f4 = os.path.join(kb_int, 'key_alt_f4')
+    # Fixes setting Game Mode/LED for Huntsman V2 w/ device
+    # files added to the usual MOUSE PROTOCOL Interface.
+    # Other devices seem to use the KEYBOARD PROTOCOL interface.
+    super_file = self.get_driver_path('key_super')
+    alt_tab = self.get_driver_path('key_alt_tab')
+    alt_f4 = self.get_driver_path('key_alt_f4')
 
+    if os.path.exists(super_file):
         if enable:
             open(super_file, 'wb').write(b'\x01')
             open(alt_tab, 'wb').write(b'\x01')
@@ -89,6 +92,20 @@ def set_game_mode(self, enable):
             open(super_file, 'wb').write(b'\x00')
             open(alt_tab, 'wb').write(b'\x00')
             open(alt_f4, 'wb').write(b'\x00')
+    else:
+        for kb_int in self.additional_interfaces:
+            super_file = os.path.join(kb_int, 'key_super')
+            alt_tab = os.path.join(kb_int, 'key_alt_tab')
+            alt_f4 = os.path.join(kb_int, 'key_alt_f4')
+
+            if enable:
+                open(super_file, 'wb').write(b'\x01')
+                open(alt_tab, 'wb').write(b'\x01')
+                open(alt_f4, 'wb').write(b'\x01')
+            else:
+                open(super_file, 'wb').write(b'\x00')
+                open(alt_tab, 'wb').write(b'\x00')
+                open(alt_f4, 'wb').write(b'\x00')
 
     with open(driver_path, 'w') as driver_file:
         if enable:
@@ -124,6 +141,41 @@ def set_macro_mode(self, enable):
     self.logger.debug("DBus call set_macro_mode")
 
     driver_path = self.get_driver_path('macro_led_state')
+
+    with open(driver_path, 'w') as driver_file:
+        if enable:
+            driver_file.write('1')
+        else:
+            driver_file.write('0')
+
+
+@endpoint('razer.device.misc.keyswitchoptimization', 'getKeyswitchOptimization', out_sig='b')
+def get_keyswitch_optimization(self):
+    """
+    Get Keyswitch optimization state
+
+    :return: Status of keyswitch optimization
+    :rtype: bool
+    """
+    self.logger.debug("DBus call get_keyswitch_optimization")
+
+    driver_path = self.get_driver_path('keyswitch_optimization')
+
+    with open(driver_path, 'r') as driver_file:
+        return driver_file.read().strip() == '1'
+
+
+@endpoint('razer.device.misc.keyswitchoptimization', 'setKeyswitchOptimization', in_sig='b')
+def set_keyswitch_optimization(self, enable):
+    """
+    Set Keyswitch optimization state
+
+    :param enable: Status of keyswitch optimization
+    :type enable: bool
+    """
+    self.logger.debug("DBus call set_keyswitch_optimization")
+
+    driver_path = self.get_driver_path('keyswitch_optimization')
 
     with open(driver_path, 'w') as driver_file:
         if enable:

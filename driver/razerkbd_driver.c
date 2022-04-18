@@ -245,8 +245,6 @@ static bool is_blade_laptop(struct usb_device *usb_dev)
     case USB_DEVICE_ID_RAZER_BLADE_15_BASE_EARLY_2021:
     case USB_DEVICE_ID_RAZER_BLADE_17_PRO_MID_2021:
     case USB_DEVICE_ID_RAZER_BLADE_14_2021:
-    case USB_DEVICE_ID_RAZER_BLADE_17_2022:
-    case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2022:
         return true;
     }
     return false;
@@ -379,7 +377,7 @@ static void razer_set_device_mode(struct usb_device *usb_dev, unsigned char mode
  *
  * Returns an integer which needs to be scaled from 0-255 -> 0-100
  */
-static ssize_t razer_attr_read_charge_level(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_get_battery(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -408,7 +406,7 @@ static ssize_t razer_attr_read_charge_level(struct device *dev, struct device_at
  *
  * Returns 0 when not charging, 1 when charging
  */
-static ssize_t razer_attr_read_charge_status(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_is_charging(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -437,20 +435,18 @@ static ssize_t razer_attr_read_charge_status(struct device *dev, struct device_a
  *
  * Sets charging effect.
  */
-static ssize_t razer_attr_write_charge_effect(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_set_charging_effect(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
     struct razer_report report = {0};
 
-    if (count != 1) {
+    if(count == 1) {
+        report = razer_chroma_misc_set_dock_charge_type(buf[0]);
+        razer_send_payload(usb_dev, &report);
+    } else {
         printk(KERN_WARNING "razerkbd: Incorrect number of bytes for setting the charging effect\n");
-        return -EINVAL;
     }
-
-    report = razer_chroma_misc_set_dock_charge_type(buf[0]);
-    razer_send_payload(usb_dev, &report);
-
     return count;
 }
 
@@ -459,7 +455,7 @@ static ssize_t razer_attr_write_charge_effect(struct device *dev, struct device_
  *
  * Sets charging colour using 3 RGB bytes
  */
-static ssize_t razer_attr_write_charge_colour(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_set_charging_colour(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -468,13 +464,13 @@ static ssize_t razer_attr_write_charge_colour(struct device *dev, struct device_
     struct razer_report report = razer_chroma_misc_set_dock_charge_type(0x01);
     razer_send_payload(usb_dev, &report);
 
-    if (count != 3) {
-        printk(KERN_WARNING "razerkbd: Charging colour mode only accepts RGB (3byte)\n");
-        return -EINVAL;
-    }
 
-    report = razer_chroma_standard_set_led_rgb(NOSTORE, BATTERY_LED, (struct razer_rgb*)&buf[0]);
-    razer_send_payload(usb_dev, &report);
+    if(count == 3) {
+        report = razer_chroma_standard_set_led_rgb(NOSTORE, BATTERY_LED, (struct razer_rgb*)&buf[0]);
+        razer_send_payload(usb_dev, &report);
+    } else {
+        printk(KERN_WARNING "razerkbd: Charging colour mode only accepts RGB (3byte)");
+    }
 
     return count;
 }
@@ -482,15 +478,13 @@ static ssize_t razer_attr_write_charge_colour(struct device *dev, struct device_
 /**
  * Read device file "charge_low_threshold"
  */
-static ssize_t razer_attr_read_charge_low_threshold(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_low_battery_threshold(struct device *dev, struct device_attribute *attr, char *buf)
 {
-    struct usb_interface *intf = to_usb_interface(dev->parent);
-    struct usb_device *usb_dev = interface_to_usbdev(intf);
-
+    struct razer_kbd_device *device = dev_get_drvdata(dev);
     struct razer_report report = razer_chroma_misc_get_low_battery_threshold();
     struct razer_report response = {0};
 
-    response = razer_send_payload(usb_dev, &report);
+    response = razer_send_payload(device->usbdev, &report);
 
     return sprintf(buf, "%d\n", response.arguments[0]);
 }
@@ -500,7 +494,7 @@ static ssize_t razer_attr_read_charge_low_threshold(struct device *dev, struct d
  *
  * Sets the low battery blink threshold to the ASCII number written to this file.
  */
-static ssize_t razer_attr_write_charge_low_threshold(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_set_low_battery_threshold(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -521,7 +515,7 @@ static ssize_t razer_attr_write_charge_low_threshold(struct device *dev, struct 
  * game mode as that keyboard device is missing a super key. A hacky and over-the-top way to disable
  * the super key if you ask me.
  */
-static ssize_t razer_attr_write_game_led_state(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_game(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -547,7 +541,7 @@ static ssize_t razer_attr_write_game_led_state(struct device *dev, struct device
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_game_led_state(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_mode_game(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -568,12 +562,75 @@ static ssize_t razer_attr_read_game_led_state(struct device *dev, struct device_
 }
 
 /**
+ * Write device file "keyswitch_optimization"
+ */
+static ssize_t razer_attr_write_keyswitch_optimization(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+    struct usb_interface *intf = to_usb_interface(dev->parent);
+    struct usb_device *usb_dev = interface_to_usbdev(intf);
+    struct razer_report report = {0};
+    unsigned char mode = (unsigned char)simple_strtoul(buf, NULL, 10);
+
+    // Toggle Keyswitch Optimization
+    switch(usb_dev->descriptor.idProduct) {
+    case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
+        report = razer_chroma_misc_set_keyswitch_optimization(NOSTORE, mode);
+        report.transaction_id.id = 0x1f;
+        razer_send_payload(usb_dev, &report);
+        report = razer_chroma_misc_set_keyswitch_optimization(VARSTORE, mode);
+        report.transaction_id.id = 0x1f;
+        razer_send_payload(usb_dev, &report);
+        break;
+    default:
+        report = razer_chroma_misc_set_keyswitch_optimization(NOSTORE, mode);
+        report.transaction_id.id = 0x1f;
+        razer_send_payload(usb_dev, &report);
+        report = razer_chroma_misc_set_keyswitch_optimization(VARSTORE, mode);
+        report.transaction_id.id = 0x1f;
+        razer_send_payload(usb_dev, &report);
+    }
+
+    return count;
+}
+
+/**
+ * Read device file "keyswitch_optimization"
+ */
+static ssize_t razer_attr_read_keyswitch_optimization(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    struct usb_interface *intf = to_usb_interface(dev->parent);
+    struct usb_device *usb_dev = interface_to_usbdev(intf);
+    struct razer_report report = {0};
+    struct razer_report response = {0};
+    int state;
+
+    switch(usb_dev->descriptor.idProduct) {
+    case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
+        report = razer_chroma_misc_get_keyswitch_optimization();
+        report.transaction_id.id = 0x1f;
+        break;
+    default:
+        report = razer_chroma_misc_get_keyswitch_optimization();
+    }
+
+    response = razer_send_payload(usb_dev, &report);
+
+    if(response.arguments[1] == 0x14) { // Either 0x00 or 0x14
+        state = 0; // Typing
+    } else {
+        state = 1; // Gaming
+    }
+
+    return sprintf(buf, "%d\n", state);
+}
+
+/**
  * Write device file "mode_macro"
  *
  * When 1 is written (as a character, 0x31) Macro mode will be enabled, if 0 is written (0x30)
  * then game mode will be disabled
  */
-static ssize_t razer_attr_write_macro_led_state(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_macro(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -590,7 +647,7 @@ static ssize_t razer_attr_write_macro_led_state(struct device *dev, struct devic
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_macro_led_state(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_mode_macro(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -928,14 +985,6 @@ static ssize_t razer_attr_read_device_type(struct device *dev, struct device_att
         device_type = "Razer BlackWidow V3 Mini Hyperspeed (Wireless)\n";
         break;
 
-    case USB_DEVICE_ID_RAZER_BLADE_17_2022:
-        device_type = "Razer Blade 17 (2022)\n";
-        break;
-
-    case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2022:
-        device_type = "Razer Blade 15 Advanced (Early 2022)\n";
-        break;
-
     default:
         device_type = "Unknown Device\n";
     }
@@ -948,7 +997,7 @@ static ssize_t razer_attr_read_device_type(struct device *dev, struct device_att
  *
  * When 1 is written the LED will blink, 0 will static
  */
-static ssize_t razer_attr_write_macro_led_effect(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_macro_effect(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1005,7 +1054,7 @@ static ssize_t razer_attr_write_macro_led_effect(struct device *dev, struct devi
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_macro_led_effect(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_mode_macro_effect(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1020,7 +1069,7 @@ static ssize_t razer_attr_read_macro_led_effect(struct device *dev, struct devic
  *
  * The brightness oscillates between fully on and fully off generating a pulsing effect
  */
-static ssize_t razer_attr_write_matrix_effect_pulsate(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_pulsate(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1046,7 +1095,7 @@ static ssize_t razer_attr_write_matrix_effect_pulsate(struct device *dev, struct
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_matrix_effect_pulsate(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_mode_pulsate(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1063,7 +1112,7 @@ static ssize_t razer_attr_read_matrix_effect_pulsate(struct device *dev, struct 
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_profile_led_red(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_tartarus_profile_led_red(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1090,7 +1139,7 @@ static ssize_t razer_attr_read_profile_led_red(struct device *dev, struct device
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_profile_led_green(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_tartarus_profile_led_green(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1117,7 +1166,7 @@ static ssize_t razer_attr_read_profile_led_green(struct device *dev, struct devi
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_profile_led_blue(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_tartarus_profile_led_blue(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1142,7 +1191,7 @@ static ssize_t razer_attr_read_profile_led_blue(struct device *dev, struct devic
 /**
  * Write device file "profile_led_red"
  */
-static ssize_t razer_attr_write_profile_led_red(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_tartarus_profile_led_red(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1167,7 +1216,7 @@ static ssize_t razer_attr_write_profile_led_red(struct device *dev, struct devic
 /**
  * Write device file "profile_led_green"
  */
-static ssize_t razer_attr_write_profile_led_green(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_tartarus_profile_led_green(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1191,7 +1240,7 @@ static ssize_t razer_attr_write_profile_led_green(struct device *dev, struct dev
 /**
  * Write device file "profile_led_blue"
  */
-static ssize_t razer_attr_write_profile_led_blue(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_tartarus_profile_led_blue(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1217,7 +1266,7 @@ static ssize_t razer_attr_write_profile_led_blue(struct device *dev, struct devi
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_device_serial(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_get_serial(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1241,7 +1290,7 @@ static ssize_t razer_attr_read_device_serial(struct device *dev, struct device_a
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_firmware_version(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_get_firmware_version(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1256,7 +1305,7 @@ static ssize_t razer_attr_read_firmware_version(struct device *dev, struct devic
  *
  * No keyboard effect is activated whenever this file is written to
  */
-static ssize_t razer_attr_write_matrix_effect_none(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_none(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1325,7 +1374,7 @@ static ssize_t razer_attr_write_matrix_effect_none(struct device *dev, struct de
  *
  * For the extended its 0x00 and 0x01
  */
-static ssize_t razer_attr_write_matrix_effect_wave(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_wave(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1385,7 +1434,7 @@ static ssize_t razer_attr_write_matrix_effect_wave(struct device *dev, struct de
  *
  * Specrum effect mode is activated whenever the file is written to
  */
-static ssize_t razer_attr_write_matrix_effect_spectrum(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_spectrum(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1454,63 +1503,61 @@ static ssize_t razer_attr_write_matrix_effect_spectrum(struct device *dev, struc
  *
  * Sets reactive mode when this file is written to. A speed byte and 3 RGB bytes should be written
  */
-static ssize_t razer_attr_write_matrix_effect_reactive(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_reactive(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
     struct razer_report report = {0};
-    unsigned char speed;
 
-    if (count != 4) {
-        printk(KERN_WARNING "razerkbd: Reactive only accepts Speed, RGB (4byte)\n");
-        return -EINVAL;
+    if(count == 4) {
+        unsigned char speed = (unsigned char)buf[0];
+
+        switch(usb_dev->descriptor.idProduct) {
+        case USB_DEVICE_ID_RAZER_ORNATA:
+        case USB_DEVICE_ID_RAZER_ORNATA_CHROMA:
+        case USB_DEVICE_ID_RAZER_HUNTSMAN_ELITE:
+        case USB_DEVICE_ID_RAZER_HUNTSMAN_TE:
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_2019:
+        case USB_DEVICE_ID_RAZER_HUNTSMAN:
+        case USB_DEVICE_ID_RAZER_CYNOSA_CHROMA:
+        case USB_DEVICE_ID_RAZER_CYNOSA_CHROMA_PRO:
+        case USB_DEVICE_ID_RAZER_HUNTSMAN_MINI:
+        case USB_DEVICE_ID_RAZER_HUNTSMAN_MINI_JP:
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3:
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_TK:
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_PRO_WIRED:
+            report = razer_chroma_extended_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
+            break;
+
+        case USB_DEVICE_ID_RAZER_TARTARUS_V2:
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_ELITE:
+        case USB_DEVICE_ID_RAZER_CYNOSA_V2:
+        case USB_DEVICE_ID_RAZER_ORNATA_V2:
+        case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
+        case USB_DEVICE_ID_RAZER_HUNTSMAN_V2_ANALOG:
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_MINI:
+            report = razer_chroma_extended_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
+            report.transaction_id.id = 0x1F;
+            break;
+
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_MINI_WIRELESS:
+            report = razer_chroma_extended_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
+            report.transaction_id.id = 0x9F;
+            break;
+
+        case USB_DEVICE_ID_RAZER_BLACKWIDOW_CHROMA_V2:
+            report = razer_chroma_standard_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
+            report.transaction_id.id = 0x3F;  // TODO move to a usb_device variable
+            break;
+        default:
+            report = razer_chroma_standard_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
+            break;
+        }
+        razer_send_payload(usb_dev, &report);
+
+    } else {
+        printk(KERN_WARNING "razerkbd: Reactive only accepts Speed, RGB (4byte)");
     }
-
-    speed = (unsigned char)buf[0];
-
-    switch(usb_dev->descriptor.idProduct) {
-    case USB_DEVICE_ID_RAZER_ORNATA:
-    case USB_DEVICE_ID_RAZER_ORNATA_CHROMA:
-    case USB_DEVICE_ID_RAZER_HUNTSMAN_ELITE:
-    case USB_DEVICE_ID_RAZER_HUNTSMAN_TE:
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_2019:
-    case USB_DEVICE_ID_RAZER_HUNTSMAN:
-    case USB_DEVICE_ID_RAZER_CYNOSA_CHROMA:
-    case USB_DEVICE_ID_RAZER_CYNOSA_CHROMA_PRO:
-    case USB_DEVICE_ID_RAZER_HUNTSMAN_MINI:
-    case USB_DEVICE_ID_RAZER_HUNTSMAN_MINI_JP:
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3:
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_TK:
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_PRO_WIRED:
-        report = razer_chroma_extended_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
-        break;
-
-    case USB_DEVICE_ID_RAZER_TARTARUS_V2:
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_ELITE:
-    case USB_DEVICE_ID_RAZER_CYNOSA_V2:
-    case USB_DEVICE_ID_RAZER_ORNATA_V2:
-    case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
-    case USB_DEVICE_ID_RAZER_HUNTSMAN_V2_ANALOG:
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_MINI:
-        report = razer_chroma_extended_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
-        report.transaction_id.id = 0x1F;
-        break;
-
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_MINI_WIRELESS:
-        report = razer_chroma_extended_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
-        report.transaction_id.id = 0x9F;
-        break;
-
-    case USB_DEVICE_ID_RAZER_BLACKWIDOW_CHROMA_V2:
-        report = razer_chroma_standard_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
-        report.transaction_id.id = 0x3F;  // TODO move to a usb_device variable
-        break;
-    default:
-        report = razer_chroma_standard_matrix_effect_reactive(VARSTORE, BACKLIGHT_LED, speed, (struct razer_rgb*)&buf[1]);
-        break;
-    }
-    razer_send_payload(usb_dev, &report);
-
     return count;
 }
 
@@ -1519,7 +1566,7 @@ static ssize_t razer_attr_write_matrix_effect_reactive(struct device *dev, struc
  *
  * Set the keyboard to static mode when 3 RGB bytes are written
  */
-static ssize_t razer_attr_write_matrix_effect_static(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_static(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1589,25 +1636,23 @@ static ssize_t razer_attr_write_matrix_effect_static(struct device *dev, struct 
     case USB_DEVICE_ID_RAZER_BLADE_14_2021:
     case USB_DEVICE_ID_RAZER_TARTARUS:
     case USB_DEVICE_ID_RAZER_TARTARUS_CHROMA:
-    case USB_DEVICE_ID_RAZER_BLADE_17_2022:
-    case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2022:
-        if (count != 3) {
-            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)\n");
-            return -EINVAL;
+        if(count == 3) {
+            report = razer_chroma_standard_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
+            razer_send_payload(usb_dev, &report);
+        } else {
+            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)");
         }
-        report = razer_chroma_standard_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
-        razer_send_payload(usb_dev, &report);
         break;
 
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_CHROMA_V2:
     case USB_DEVICE_ID_RAZER_ORBWEAVER_CHROMA:
-        if (count != 3) {
-            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)\n");
-            return -EINVAL;
+        if(count == 3) {
+            report = razer_chroma_standard_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
+            report.transaction_id.id = 0x3F;  // TODO move to a usb_device variable
+            razer_send_payload(usb_dev, &report);
+        } else {
+            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)");
         }
-        report = razer_chroma_standard_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
-        report.transaction_id.id = 0x3F;  // TODO move to a usb_device variable
-        razer_send_payload(usb_dev, &report);
         break;
 
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_LITE:
@@ -1626,12 +1671,12 @@ static ssize_t razer_attr_write_matrix_effect_static(struct device *dev, struct 
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3:
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_TK:
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_PRO_WIRED:
-        if (count != 3) {
-            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)\n");
-            return -EINVAL;
+        if(count == 3) {
+            report = razer_chroma_extended_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
+            razer_send_payload(usb_dev, &report);
+        } else {
+            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)");
         }
-        report = razer_chroma_extended_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
-        razer_send_payload(usb_dev, &report);
         break;
 
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_ELITE:
@@ -1640,41 +1685,40 @@ static ssize_t razer_attr_write_matrix_effect_static(struct device *dev, struct 
     case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
     case USB_DEVICE_ID_RAZER_HUNTSMAN_V2_ANALOG:
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_MINI:
-        if (count != 3) {
-            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)\n");
-            return -EINVAL;
+        if(count == 3) {
+            report = razer_chroma_extended_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
+            report.transaction_id.id = 0x1F;
+            razer_send_payload(usb_dev, &report);
+        } else {
+            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)");
         }
-        report = razer_chroma_extended_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
-        report.transaction_id.id = 0x1F;
-        razer_send_payload(usb_dev, &report);
         break;
-
     case USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_MINI_WIRELESS:
-        if (count != 3) {
-            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)\n");
-            return -EINVAL;
+        if(count == 3) {
+            report = razer_chroma_extended_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
+            report.transaction_id.id = 0x9F;
+            razer_send_payload(usb_dev, &report);
+        } else {
+            printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)");
         }
-        report = razer_chroma_extended_matrix_effect_static(VARSTORE, BACKLIGHT_LED, (struct razer_rgb*)&buf[0]);
-        report.transaction_id.id = 0x9F;
-        razer_send_payload(usb_dev, &report);
         break;
 
     case USB_DEVICE_ID_RAZER_ANANSI:
-        if (count != 3) {
+        if(count == 3) {
+            report = razer_chroma_standard_set_led_state(VARSTORE, BACKLIGHT_LED, ON);
+            razer_send_payload(usb_dev, &report);
+            report = razer_chroma_standard_set_led_effect(VARSTORE, BACKLIGHT_LED, LED_STATIC);
+            razer_send_payload(usb_dev, &report);
+            report = razer_chroma_standard_set_led_rgb(VARSTORE, BACKLIGHT_LED, (struct razer_rgb *) &buf[0]);
+            razer_send_payload(usb_dev, &report);
+        } else
             printk(KERN_WARNING "razerkbd: Static mode only accepts RGB (3byte)\n");
-            return -EINVAL;
-        }
-        report = razer_chroma_standard_set_led_state(VARSTORE, BACKLIGHT_LED, ON);
-        razer_send_payload(usb_dev, &report);
-        report = razer_chroma_standard_set_led_effect(VARSTORE, BACKLIGHT_LED, LED_STATIC);
-        razer_send_payload(usb_dev, &report);
-        report = razer_chroma_standard_set_led_rgb(VARSTORE, BACKLIGHT_LED, (struct razer_rgb *) &buf[0]);
-        razer_send_payload(usb_dev, &report);
         break;
 
     default:
         printk(KERN_WARNING "razerkbd: Cannot set static mode for this device\n");
-        return -EINVAL;
+        break;
+
     }
 
     return count;
@@ -1690,7 +1734,7 @@ static ssize_t razer_attr_write_matrix_effect_static(struct device *dev, struct 
  * 4 bytes, speed, rgb
  * 1 byte, speed
  */
-static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_starlight(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1699,13 +1743,14 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
 
     switch(usb_dev->descriptor.idProduct) {
     case USB_DEVICE_ID_RAZER_ORNATA:
-        if (count != 4) {
-            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)\n");
-            return -EINVAL;
+        if(count == 4) {
+            report = razer_chroma_extended_matrix_effect_starlight_single(VARSTORE, BACKLIGHT_LED, buf[0], (struct razer_rgb*)&buf[1]);
+            razer_send_payload(usb_dev, &report);
+        } else {
+            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)");
         }
-        report = razer_chroma_extended_matrix_effect_starlight_single(VARSTORE, BACKLIGHT_LED, buf[0], (struct razer_rgb*)&buf[1]);
-        razer_send_payload(usb_dev, &report);
         break;
+
 
     case USB_DEVICE_ID_RAZER_ORNATA_CHROMA:
     case USB_DEVICE_ID_RAZER_HUNTSMAN_ELITE:
@@ -1729,8 +1774,7 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
             report = razer_chroma_extended_matrix_effect_starlight_random(VARSTORE, BACKLIGHT_LED, buf[0]);
             razer_send_payload(usb_dev, &report);
         } else {
-            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)");
         }
         break;
 
@@ -1746,8 +1790,8 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
         } else if(count == 1) {
             report = razer_chroma_extended_matrix_effect_starlight_random(VARSTORE, BACKLIGHT_LED, buf[0]);
         } else {
-            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)");
+            break;
         }
         report.transaction_id.id = 0x1F;
         razer_send_payload(usb_dev, &report);
@@ -1761,8 +1805,8 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
         } else if(count == 1) {
             report = razer_chroma_extended_matrix_effect_starlight_random(VARSTORE, BACKLIGHT_LED, buf[0]);
         } else {
-            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)");
+            break;
         }
         report.transaction_id.id = 0x9F;
         razer_send_payload(usb_dev, &report);
@@ -1782,8 +1826,7 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
             report.transaction_id.id = 0x1F;  // TODO move to a usb_device variable
             razer_send_payload(usb_dev, &report);
         } else {
-            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)");
         }
         break;
 
@@ -1798,8 +1841,7 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
             report = razer_chroma_standard_matrix_effect_starlight_random(VARSTORE, BACKLIGHT_LED, buf[0]);
             razer_send_payload(usb_dev, &report);
         } else {
-            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)");
         }
         break;
 
@@ -1817,8 +1859,7 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
             report.transaction_id.id = 0x3F;  // TODO move to a usb_device variable
             razer_send_payload(usb_dev, &report);
         } else {
-            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Starlight only accepts Speed (1byte). Speed, RGB (4byte). Speed, RGB, RGB (7byte)");
         }
         break;
 
@@ -1835,7 +1876,7 @@ static ssize_t razer_attr_write_matrix_effect_starlight(struct device *dev, stru
 /**
  * Write device file "mode_breath"
  */
-static ssize_t razer_attr_write_matrix_effect_breath(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_breath(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -1851,8 +1892,8 @@ static ssize_t razer_attr_write_matrix_effect_breath(struct device *dev, struct 
             break;
 
         default:
-            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)");
+            break;
         }
         break;
 
@@ -1877,8 +1918,8 @@ static ssize_t razer_attr_write_matrix_effect_breath(struct device *dev, struct 
             break;
 
         default:
-            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)");
+            break;
         }
         break;
 
@@ -1913,8 +1954,8 @@ static ssize_t razer_attr_write_matrix_effect_breath(struct device *dev, struct 
             break;
 
         default:
-            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)");
+            break;
         }
         break;
 
@@ -1931,8 +1972,8 @@ static ssize_t razer_attr_write_matrix_effect_breath(struct device *dev, struct 
         } else if (count == 1) { // "Random" colour mode
             report = razer_chroma_extended_matrix_effect_breathing_random(VARSTORE, BACKLIGHT_LED);
         } else {
-            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)");
+            break;
         }
         report.transaction_id.id = 0x1F;
         razer_send_payload(usb_dev, &report);
@@ -1946,8 +1987,8 @@ static ssize_t razer_attr_write_matrix_effect_breath(struct device *dev, struct 
         } else if (count == 1) { // "Random" colour mode
             report = razer_chroma_extended_matrix_effect_breathing_random(VARSTORE, BACKLIGHT_LED);
         } else {
-            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)\n");
-            return -EINVAL;
+            printk(KERN_WARNING "razerkbd: Breathing only accepts '1' (1byte). RGB (3byte). RGB, RGB (6byte)");
+            break;
         }
         report.transaction_id.id = 0x9F;
         razer_send_payload(usb_dev, &report);
@@ -2022,7 +2063,7 @@ static int has_inverted_led_state(struct device *dev)
  *
  * Reads the logo lighting state (the ASCII number) written to this file.
  */
-static ssize_t razer_attr_read_logo_led_state(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_set_logo(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -2048,7 +2089,7 @@ static ssize_t razer_attr_read_logo_led_state(struct device *dev, struct device_
  *
  * Sets the logo lighting state to the ASCII number written to this file.
  */
-static ssize_t razer_attr_write_logo_led_state(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_set_logo(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -2076,7 +2117,7 @@ static ssize_t razer_attr_write_logo_led_state(struct device *dev, struct device
  *
  * Sets the keyboard to custom mode whenever the file is written to
  */
-static ssize_t razer_attr_write_matrix_effect_custom(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_mode_custom(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -2134,7 +2175,7 @@ static ssize_t razer_attr_write_matrix_effect_custom(struct device *dev, struct 
  *
  * Sets the logo lighting state to the ASCII number written to this file.
  */
-static ssize_t razer_attr_write_fn_toggle(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_set_fn_toggle(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -2176,7 +2217,7 @@ static ssize_t razer_attr_read_test(struct device *dev, struct device_attribute 
  *
  * Sets the brightness to the ASCII number written to this file.
  */
-static ssize_t razer_attr_write_matrix_brightness(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t razer_attr_write_set_brightness(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -2251,7 +2292,7 @@ static ssize_t razer_attr_write_matrix_brightness(struct device *dev, struct dev
  *
  * Returns a string
  */
-static ssize_t razer_attr_read_matrix_brightness(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t razer_attr_read_set_brightness(struct device *dev, struct device_attribute *attr, char *buf)
 {
     struct usb_interface *intf = to_usb_interface(dev->parent);
     struct usb_device *usb_dev = interface_to_usbdev(intf);
@@ -2340,18 +2381,18 @@ static ssize_t razer_attr_write_device_mode(struct device *dev, struct device_at
     struct razer_report report = {0};
 
     if (count != 2) {
-        printk(KERN_WARNING "razerkbd: Device mode only takes 2 bytes.\n");
-        return -EINVAL;
+        printk(KERN_WARNING "razerkbd: Device mode only takes 2 bytes.");
+        goto out;
     }
 
-    // No-op on Blades
     if (is_blade_laptop(usb_dev)) {
-        return count;
+        goto out;
     }
 
     report = razer_chroma_standard_set_device_mode(buf[0], buf[1]);
     razer_send_payload(usb_dev, &report);
 
+out:
     return count;
 }
 
@@ -2367,10 +2408,7 @@ static ssize_t razer_attr_read_device_mode(struct device *dev, struct device_att
     struct razer_report report = razer_chroma_standard_get_device_mode();
     struct razer_report response = razer_send_payload(usb_dev, &report);
 
-    buf[0] = response.arguments[0];
-    buf[1] = response.arguments[1];
-
-    return 2;
+    return sprintf(buf, "%d:%d\n", response.arguments[0], response.arguments[1]);
 }
 
 /**
@@ -2395,7 +2433,7 @@ static ssize_t razer_attr_write_matrix_custom_frame(struct device *dev, struct d
     while(offset < count) {
         if(offset + 3 > count) {
             printk(KERN_ALERT "razerkbd: Wrong Amount of data provided: Should be ROW_ID, START_COL, STOP_COL, N_RGB\n");
-            return -EINVAL;
+            break;
         }
 
         row_id = buf[offset++];
@@ -2407,12 +2445,12 @@ static ssize_t razer_attr_write_matrix_custom_frame(struct device *dev, struct d
 
         if(start_col > stop_col) {
             printk(KERN_ALERT "razerkbd: Start column is greater than end column\n");
-            return -EINVAL;
+            break;
         }
 
         if(offset + row_length > count) {
             printk(KERN_ALERT "razerkbd: Not enough RGB to fill row\n");
-            return -EINVAL;
+            break;
         }
 
         // Offset now at beginning of RGB data
@@ -2484,7 +2522,6 @@ static ssize_t razer_attr_write_matrix_custom_frame(struct device *dev, struct d
         case USB_DEVICE_ID_RAZER_BLADE_17_PRO_MID_2021:
         case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2021:
         case USB_DEVICE_ID_RAZER_BLADE_14_2021:
-        case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2022:
             report.transaction_id.id = 0x80; // Fall into the 2016/blade/blade2016 to set device id
             fallthrough;
         default:
@@ -2501,17 +2538,88 @@ static ssize_t razer_attr_write_matrix_custom_frame(struct device *dev, struct d
     return count;
 }
 
+/**
+ * Read device file "poll_rate"
+ *
+ * Returns a string
+ */
+static ssize_t razer_attr_read_poll_rate(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    struct usb_interface *intf = to_usb_interface(dev->parent);
+    struct usb_device *usb_dev = interface_to_usbdev(intf);
+    struct razer_report report = razer_chroma_misc_get_polling_rate();
+    struct razer_report response_report = {0};
+    unsigned short polling_rate = 0;
+
+    switch(usb_dev->descriptor.idProduct) {
+    case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
+        report = razer_chroma_misc_get_polling_rate2();
+        report.transaction_id.id = 0x1f;
+        break;
+    }
+
+    response_report = razer_send_payload(usb_dev, &report);
+
+    switch(response_report.arguments[1]) {
+    case 0x01:
+        polling_rate = 8000;
+        break;
+    case 0x02:
+        polling_rate = 4000;
+        break;
+    case 0x04:
+        polling_rate = 2000;
+        break;
+    case 0x08:
+        polling_rate = 1000;
+        break;
+    case  0x10:
+        polling_rate = 500;
+        break;
+    case  0x20:
+        polling_rate = 250;
+        break;
+    case  0x40:
+        polling_rate = 125;
+        break;
+    }
+
+    return sprintf(buf, "%d\n", polling_rate);
+}
+
+/**
+ * Write device file "poll_rate"
+ *
+ * Sets the poll rate
+ */
+static ssize_t razer_attr_write_poll_rate(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+    struct usb_interface *intf = to_usb_interface(dev->parent);
+    struct usb_device *usb_dev = interface_to_usbdev(intf);
+    unsigned short polling_rate = (unsigned short)simple_strtoul(buf, NULL, 10);
+    struct razer_report report = razer_chroma_misc_get_polling_rate();
+
+    switch(usb_dev->descriptor.idProduct) {
+    case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
+        report = razer_chroma_misc_set_polling_rate2(polling_rate);
+        report.transaction_id.id = 0x1f;
+        break;
+    }
+
+    razer_send_payload(usb_dev, &report);
+
+    return count;
+}
+
+
 
 static ssize_t razer_attr_write_key_super(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     struct razer_kbd_device *device = dev_get_drvdata(dev);
 
-    if (count < 1) {
-        printk(KERN_ALERT "razerkbd: Failed to provide argument\n");
-        return -EINVAL;
+    if (count >= 1) {
+        device->block_keys[0] = buf[0];
     }
-
-    device->block_keys[0] = buf[0];
 
     return count;
 }
@@ -2530,13 +2638,10 @@ static ssize_t razer_attr_write_key_alt_tab(struct device *dev, struct device_at
 {
     struct razer_kbd_device *device = dev_get_drvdata(dev);
 
-    if (count < 1) {
-        printk(KERN_ALERT "razerkbd: Failed to provide argument\n");
-        return -EINVAL;
+    if (count >= 1) {
+        printk(KERN_WARNING "razerkbd: Settings block_keys[1] to %u\n", buf[0]);
+        device->block_keys[1] = buf[0];
     }
-
-    printk(KERN_WARNING "razerkbd: Settings block_keys[1] to %u\n", buf[0]);
-    device->block_keys[1] = buf[0];
 
     return count;
 }
@@ -2554,12 +2659,9 @@ static ssize_t razer_attr_write_key_alt_f4(struct device *dev, struct device_att
 {
     struct razer_kbd_device *device = dev_get_drvdata(dev);
 
-    if (count < 1) {
-        printk(KERN_ALERT "razerkbd: Failed to provide argument\n");
-        return -EINVAL;
+    if (count >= 1) {
+        device->block_keys[2] = buf[0];
     }
-
-    device->block_keys[2] = buf[0];
 
     return count;
 }
@@ -2581,35 +2683,38 @@ static ssize_t razer_attr_read_key_alt_f4(struct device *dev, struct device_attr
  * Write only is 0220
  * Read and write is 0664
  */
-static DEVICE_ATTR(game_led_state,          0660, razer_attr_read_game_led_state,             razer_attr_write_game_led_state);
-static DEVICE_ATTR(macro_led_state,         0660, razer_attr_read_macro_led_state,            razer_attr_write_macro_led_state);
-static DEVICE_ATTR(macro_led_effect,        0660, razer_attr_read_macro_led_effect,           razer_attr_write_macro_led_effect);
-static DEVICE_ATTR(logo_led_state,          0660, razer_attr_read_logo_led_state,             razer_attr_write_logo_led_state);
-static DEVICE_ATTR(profile_led_red,         0660, razer_attr_read_profile_led_red,            razer_attr_write_profile_led_red);
-static DEVICE_ATTR(profile_led_green,       0660, razer_attr_read_profile_led_green,          razer_attr_write_profile_led_green);
-static DEVICE_ATTR(profile_led_blue,        0660, razer_attr_read_profile_led_blue,           razer_attr_write_profile_led_blue);
+// TODO device_mode endpoint
+static DEVICE_ATTR(game_led_state,          0660, razer_attr_read_mode_game,                  razer_attr_write_mode_game);
+static DEVICE_ATTR(macro_led_state,         0660, razer_attr_read_mode_macro,                 razer_attr_write_mode_macro);
+static DEVICE_ATTR(macro_led_effect,        0660, razer_attr_read_mode_macro_effect,          razer_attr_write_mode_macro_effect);
+static DEVICE_ATTR(logo_led_state,          0660, razer_attr_read_set_logo,                   razer_attr_write_set_logo);
+static DEVICE_ATTR(profile_led_red,         0660, razer_attr_read_tartarus_profile_led_red,   razer_attr_write_tartarus_profile_led_red);
+static DEVICE_ATTR(profile_led_green,       0660, razer_attr_read_tartarus_profile_led_green, razer_attr_write_tartarus_profile_led_green);
+static DEVICE_ATTR(profile_led_blue,        0660, razer_attr_read_tartarus_profile_led_blue,  razer_attr_write_tartarus_profile_led_blue);
 
 
 static DEVICE_ATTR(test,                    0660, razer_attr_read_test,                       razer_attr_write_test);
 static DEVICE_ATTR(version,                 0440, razer_attr_read_version,                    NULL);
 static DEVICE_ATTR(kbd_layout,              0440, razer_attr_read_kbd_layout,                 NULL);
-static DEVICE_ATTR(firmware_version,        0440, razer_attr_read_firmware_version,           NULL);
-static DEVICE_ATTR(fn_toggle,               0220, NULL,                                       razer_attr_write_fn_toggle);
+static DEVICE_ATTR(firmware_version,        0440, razer_attr_read_get_firmware_version,       NULL);
+static DEVICE_ATTR(fn_toggle,               0220, NULL,                                       razer_attr_write_set_fn_toggle);
+static DEVICE_ATTR(poll_rate,               0660, razer_attr_read_poll_rate,                  razer_attr_write_poll_rate);
+static DEVICE_ATTR(keyswitch_optimization,  0660, razer_attr_read_keyswitch_optimization,     razer_attr_write_keyswitch_optimization);
 
 static DEVICE_ATTR(device_type,             0440, razer_attr_read_device_type,                NULL);
 static DEVICE_ATTR(device_mode,             0660, razer_attr_read_device_mode,                razer_attr_write_device_mode);
-static DEVICE_ATTR(device_serial,           0440, razer_attr_read_device_serial,              NULL);
+static DEVICE_ATTR(device_serial,           0440, razer_attr_read_get_serial,                 NULL);
 
-static DEVICE_ATTR(matrix_effect_none,      0220, NULL,                                       razer_attr_write_matrix_effect_none);
-static DEVICE_ATTR(matrix_effect_wave,      0220, NULL,                                       razer_attr_write_matrix_effect_wave);
-static DEVICE_ATTR(matrix_effect_spectrum,  0220, NULL,                                       razer_attr_write_matrix_effect_spectrum);
-static DEVICE_ATTR(matrix_effect_reactive,  0220, NULL,                                       razer_attr_write_matrix_effect_reactive);
-static DEVICE_ATTR(matrix_effect_static,    0220, NULL,                                       razer_attr_write_matrix_effect_static);
-static DEVICE_ATTR(matrix_effect_starlight, 0220, NULL,                                       razer_attr_write_matrix_effect_starlight);
-static DEVICE_ATTR(matrix_effect_breath,    0220, NULL,                                       razer_attr_write_matrix_effect_breath);
-static DEVICE_ATTR(matrix_effect_pulsate,   0660, razer_attr_read_matrix_effect_pulsate,      razer_attr_write_matrix_effect_pulsate);
-static DEVICE_ATTR(matrix_brightness,       0660, razer_attr_read_matrix_brightness,          razer_attr_write_matrix_brightness);
-static DEVICE_ATTR(matrix_effect_custom,    0220, NULL,                                       razer_attr_write_matrix_effect_custom);
+static DEVICE_ATTR(matrix_effect_none,      0220, NULL,                                       razer_attr_write_mode_none);
+static DEVICE_ATTR(matrix_effect_wave,      0220, NULL,                                       razer_attr_write_mode_wave);
+static DEVICE_ATTR(matrix_effect_spectrum,  0220, NULL,                                       razer_attr_write_mode_spectrum);
+static DEVICE_ATTR(matrix_effect_reactive,  0220, NULL,                                       razer_attr_write_mode_reactive);
+static DEVICE_ATTR(matrix_effect_static,    0220, NULL,                                       razer_attr_write_mode_static);
+static DEVICE_ATTR(matrix_effect_starlight, 0220, NULL,                                       razer_attr_write_mode_starlight);
+static DEVICE_ATTR(matrix_effect_breath,    0220, NULL,                                       razer_attr_write_mode_breath);
+static DEVICE_ATTR(matrix_effect_pulsate,   0660, razer_attr_read_mode_pulsate,               razer_attr_write_mode_pulsate);
+static DEVICE_ATTR(matrix_brightness,       0660, razer_attr_read_set_brightness,             razer_attr_write_set_brightness);
+static DEVICE_ATTR(matrix_effect_custom,    0220, NULL,                                       razer_attr_write_mode_custom);
 static DEVICE_ATTR(matrix_custom_frame,     0220, NULL,                                       razer_attr_write_matrix_custom_frame);
 
 
@@ -2617,11 +2722,11 @@ static DEVICE_ATTR(key_super,               0660, razer_attr_read_key_super,    
 static DEVICE_ATTR(key_alt_tab,             0660, razer_attr_read_key_alt_tab,                razer_attr_write_key_alt_tab);
 static DEVICE_ATTR(key_alt_f4,              0660, razer_attr_read_key_alt_f4,                 razer_attr_write_key_alt_f4);
 
-static DEVICE_ATTR(charge_level,            0440, razer_attr_read_charge_level,               NULL);
-static DEVICE_ATTR(charge_status,           0440, razer_attr_read_charge_status,              NULL);
-static DEVICE_ATTR(charge_effect,           0220, NULL,                                       razer_attr_write_charge_effect);
-static DEVICE_ATTR(charge_colour,           0220, NULL,                                       razer_attr_write_charge_colour);
-static DEVICE_ATTR(charge_low_threshold,    0660, razer_attr_read_charge_low_threshold,       razer_attr_write_charge_low_threshold);
+static DEVICE_ATTR(charge_level,            0440, razer_attr_read_get_battery,                NULL);
+static DEVICE_ATTR(charge_status,           0440, razer_attr_read_is_charging,                NULL);
+static DEVICE_ATTR(charge_effect,           0220, NULL,                                       razer_attr_write_set_charging_effect);
+static DEVICE_ATTR(charge_colour,           0220, NULL,                                       razer_attr_write_set_charging_colour);
+static DEVICE_ATTR(charge_low_threshold,    0660, razer_attr_read_low_battery_threshold,      razer_attr_write_set_low_battery_threshold);
 
 
 
@@ -3161,6 +3266,12 @@ static int razer_kbd_probe(struct hid_device *hdev, const struct hid_device_id *
             break;
 
         case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
+            CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_poll_rate);                     // Poll Rate
+            CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_keyswitch_optimization);        // Keyswitch Optimization
+            CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_key_super);                     // Super Key
+            CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_key_alt_tab);                   // Alt + Tab
+            CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_key_alt_f4);                    // Alt + F4
+            fallthrough;
         case USB_DEVICE_ID_RAZER_ORNATA_CHROMA:
         case USB_DEVICE_ID_RAZER_ORNATA_V2:
         case USB_DEVICE_ID_RAZER_HUNTSMAN_ELITE:
@@ -3314,8 +3425,6 @@ static int razer_kbd_probe(struct hid_device *hdev, const struct hid_device_id *
         case USB_DEVICE_ID_RAZER_BLADE_17_PRO_MID_2021:
         case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2021:
         case USB_DEVICE_ID_RAZER_BLADE_14_2021:
-        case USB_DEVICE_ID_RAZER_BLADE_17_2022:
-        case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2022:
             CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_matrix_effect_wave);            // Wave effect
             CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_matrix_effect_starlight);       // Starlight effect
             CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_matrix_effect_spectrum);        // Spectrum effect
@@ -3545,6 +3654,12 @@ static void razer_kbd_disconnect(struct hid_device *hdev)
             break;
 
         case USB_DEVICE_ID_RAZER_HUNTSMAN_V2:
+            device_remove_file(&hdev->dev, &dev_attr_poll_rate);                     // Poll Rate
+            device_remove_file(&hdev->dev, &dev_attr_keyswitch_optimization);        // Keyswitch Optimization
+            device_remove_file(&hdev->dev, &dev_attr_key_super);                     // Super Key
+            device_remove_file(&hdev->dev, &dev_attr_key_alt_tab);                   // Alt + Tab
+            device_remove_file(&hdev->dev, &dev_attr_key_alt_f4);                    // Alt + F4
+            fallthrough;
         case USB_DEVICE_ID_RAZER_ORNATA_CHROMA:
         case USB_DEVICE_ID_RAZER_ORNATA_V2:
         case USB_DEVICE_ID_RAZER_HUNTSMAN_ELITE:
@@ -3698,8 +3813,6 @@ static void razer_kbd_disconnect(struct hid_device *hdev)
         case USB_DEVICE_ID_RAZER_BLADE_17_PRO_MID_2021:
         case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2021:
         case USB_DEVICE_ID_RAZER_BLADE_14_2021:
-        case USB_DEVICE_ID_RAZER_BLADE_17_2022:
-        case USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2022:
             device_remove_file(&hdev->dev, &dev_attr_matrix_effect_wave);            // Wave effect
             device_remove_file(&hdev->dev, &dev_attr_matrix_effect_starlight);       // Starlight effect
             device_remove_file(&hdev->dev, &dev_attr_matrix_effect_spectrum);        // Spectrum effect
@@ -3832,8 +3945,6 @@ static const struct hid_device_id razer_devices[] = {
     { HID_USB_DEVICE(USB_VENDOR_ID_RAZER,USB_DEVICE_ID_RAZER_BLACKWIDOW_V3_MINI_WIRELESS) },
     { HID_USB_DEVICE(USB_VENDOR_ID_RAZER,USB_DEVICE_ID_RAZER_HUNTSMAN_V2) },
     { HID_USB_DEVICE(USB_VENDOR_ID_RAZER,USB_DEVICE_ID_RAZER_HUNTSMAN_V2_ANALOG) },
-    { HID_USB_DEVICE(USB_VENDOR_ID_RAZER,USB_DEVICE_ID_RAZER_BLADE_17_2022) },
-    { HID_USB_DEVICE(USB_VENDOR_ID_RAZER,USB_DEVICE_ID_RAZER_BLADE_15_ADV_EARLY_2022) },
     { 0 }
 };
 

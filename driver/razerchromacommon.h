@@ -93,6 +93,9 @@ struct razer_report razer_chroma_mouse_extended_matrix_effect_breathing_dual(uns
  */
 struct razer_report razer_chroma_misc_fn_key_toggle(unsigned char state);
 
+struct razer_report razer_chroma_misc_set_keyswitch_optimization(unsigned char variable_storage, unsigned char optimization_mode);
+struct razer_report razer_chroma_misc_get_keyswitch_optimization(void);
+
 struct razer_report razer_chroma_misc_set_blade_brightness(unsigned char brightness);
 struct razer_report razer_chroma_misc_get_blade_brightness(void);
 
